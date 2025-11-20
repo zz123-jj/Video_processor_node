@@ -1,0 +1,16 @@
+video_processor:
+  ros__parameters:
+    # Input video file path (required)
+    input_video_path: "/path/to/your/input_video.mp4"
+    
+    # Output video file path
+    output_video_path: "/path/to/your/output_annotated.mp4"
+    
+    # Playback speed multiplier (1.0 = normal speed, 2.0 = 2x faster)
+    playback_speed: 1.0
+    
+    # Show preview window during processing
+    show_preview: false
+    
+    # Frame ID for published images
+    frame_id: "camera_optical_frame"
