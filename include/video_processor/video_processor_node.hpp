@@ -23,8 +23,6 @@ public:
 private:
   void processVideo();
   void armorsCallback(const auto_aim_interfaces::msg::Armors::SharedPtr msg);
-  void drawArmors(cv::Mat & frame, const auto_aim_interfaces::msg::Armors::SharedPtr & armors);
-  std::string getColorName(uint8_t color);
   
   // OpenCV video capture and writer
   std::unique_ptr<cv::VideoCapture> video_capture_;

@@ -13,7 +13,6 @@ endif()
 # Find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
@@ -24,14 +23,13 @@ find_package(OpenCV REQUIRED)
 # Include directories
 include_directories(include)
 
-# Create the video processor node library
-add_library(${PROJECT_NAME} SHARED
+# Create the video processor node executable
+add_executable(video_processor_node
   src/video_processor_node.cpp
 )
 
-ament_target_dependencies(${PROJECT_NAME}
+ament_target_dependencies(video_processor_node
   rclcpp
-  rclcpp_components
   sensor_msgs
   std_msgs
   cv_bridge
@@ -40,17 +38,9 @@ ament_target_dependencies(${PROJECT_NAME}
   OpenCV
 )
 
-# Register the component with ROS2
-rclcpp_components_register_node(${PROJECT_NAME}
-  PLUGIN "video_processor::VideoProcessorNode"
-  EXECUTABLE video_processor_node
-)
-
 # Install targets
-install(TARGETS ${PROJECT_NAME}
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION bin
+install(TARGETS video_processor_node
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY include/

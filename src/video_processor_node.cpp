@@ -12,7 +12,7 @@ VideoProcessorNode::VideoProcessorNode(const rclcpp::NodeOptions & options)
   detected_frames_(0)
 {
   RCLCPP_INFO(this->get_logger(), "Initializing VideoProcessorNode...");
-  
+
   // Declare and get parameters
   input_video_path_ = this->declare_parameter("input_video_path", "");
   output_video_path_ = this->declare_parameter("output_video_path", "output_annotated.mp4");
@@ -51,14 +51,13 @@ VideoProcessorNode::VideoProcessorNode(const rclcpp::NodeOptions & options)
     throw std::runtime_error("Failed to create output video file");
   }
   
-  // Create publishers with best effort QoS to match detector
-  rclcpp::QoS qos(10);
-  qos.reliability(rclcpp::ReliabilityPolicy::BestEffort);
+  // Create publishers with SensorDataQoS to match detector
+  auto qos = rclcpp::SensorDataQoS();
   
   image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("/image_raw", qos);
   camera_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("/camera_info", qos);
   
-  // Create subscriber for detection results with best effort QoS
+  // Create subscriber for detection results with SensorDataQoS
   armors_sub_ = this->create_subscription<auto_aim_interfaces::msg::Armors>(
     "/detector/armors", qos,
     std::bind(&VideoProcessorNode::armorsCallback, this, std::placeholders::_1));
@@ -117,12 +116,10 @@ void VideoProcessorNode::processVideo()
   // Set distortion model
   camera_info_msg->distortion_model = "plumb_bob";
   
-  // Set camera matrix (K) - estimated values for typical camera
-  // [fx  0  cx]
-  // [ 0 fy  cy]
-  // [ 0  0   1]
-  double fx = frame_width_ * 0.8;  // Typical focal length
-  double fy = frame_width_ * 0.8;
+  // Set camera matrix (K) - use more realistic values for armor detection
+  // Typical camera parameters for RoboMaster vision
+  double fx = frame_width_ * 1.2;  // Increase focal length for better depth estimation
+  double fy = frame_width_ * 1.2;
   double cx = frame_width_ / 2.0;
   double cy = frame_height_ / 2.0;
   
@@ -154,14 +151,11 @@ void VideoProcessorNode::processVideo()
   // Give detector some time to process
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
   
-  // Draw detection results on frame
+  // Update detection statistics (no drawing needed)
   {
     std::lock_guard<std::mutex> lock(armors_mutex_);
-    if (latest_armors_) {
-      drawArmors(frame, latest_armors_);
-      if (!latest_armors_->armors.empty()) {
-        detected_frames_++;
-      }
+    if (latest_armors_ && !latest_armors_->armors.empty()) {
+      detected_frames_++;
     }
   }
   
@@ -193,89 +187,35 @@ void VideoProcessorNode::armorsCallback(const auto_aim_interfaces::msg::Armors::
 {
   std::lock_guard<std::mutex> lock(armors_mutex_);
   latest_armors_ = msg;
-}
-
-void VideoProcessorNode::drawArmors(
-  cv::Mat & frame,
-  const auto_aim_interfaces::msg::Armors::SharedPtr & armors)
-{
-  if (!armors || armors->armors.empty()) {
-    return;
-  }
   
-  for (const auto & armor : armors->armors) {
-    // Determine color based on armor color
-    cv::Scalar box_color;
-    if (armor.color == 0) {  // BLUE
-      box_color = cv::Scalar(255, 0, 0);  // Blue in BGR
-    } else if (armor.color == 1) {  // RED
-      box_color = cv::Scalar(0, 0, 255);  // Red in BGR
-    } else {
-      box_color = cv::Scalar(0, 255, 0);  // Green for others
+  // Debug: log detection results
+  if (msg && !msg->armors.empty()) {
+    RCLCPP_INFO(this->get_logger(), "Received %zu armors detection", msg->armors.size());
+    for (size_t i = 0; i < msg->armors.size(); ++i) {
+      const auto& armor = msg->armors[i];
+      RCLCPP_INFO(this->get_logger(), "Armor %zu: %s at (%.2f, %.2f, %.2f), distance=%.2f",
+                  i, armor.number.c_str(), 
+                  armor.pose.position.x, armor.pose.position.y, armor.pose.position.z,
+                  armor.distance_to_image_center);
     }
-    
-    // Project 3D points to 2D (simplified - just draw rectangle around armor)
-    // In a real implementation, you would use the pose to project the 3D corners
-    
-    // For now, let's draw a circle at the center
-    // Convert 3D position to 2D (this is a simplified projection)
-    // You should use proper camera intrinsics for accurate projection
-    double fx = 1000.0;  // Focal length (should come from camera_info)
-    double fy = 1000.0;
-    double cx = frame_width_ / 2.0;
-    double cy = frame_height_ / 2.0;
-    
-    // Project center point
-    if (armor.pose.position.z > 0.1) {  // Avoid division by zero
-      int x = static_cast<int>(armor.pose.position.x * fx / armor.pose.position.z + cx);
-      int y = static_cast<int>(armor.pose.position.y * fy / armor.pose.position.z + cy);
-      
-      // Check if point is within frame
-      if (x >= 0 && x < frame_width_ && y >= 0 && y < frame_height_) {
-        // Draw circle at center
-        cv::circle(frame, cv::Point(x, y), 10, box_color, 2);
-        
-        // Draw cross
-        cv::line(frame, cv::Point(x - 15, y), cv::Point(x + 15, y), box_color, 2);
-        cv::line(frame, cv::Point(x, y - 15), cv::Point(x, y + 15), box_color, 2);
-        
-        // Draw label
-        std::string label = cv::format("%s %s d=%.2fm",
-                                       getColorName(armor.color).c_str(),
-                                       armor.number.c_str(),
-                                       armor.distance_to_image_center);
-        
-        cv::putText(frame, label, cv::Point(x + 15, y - 15),
-                   cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2);
-      }
-    }
-  }
-  
-  // Draw detection count
-  cv::putText(frame, 
-              cv::format("Detected: %zu armors", armors->armors.size()),
-              cv::Point(10, frame_height_ - 20),
-              cv::FONT_HERSHEY_SIMPLEX, 0.8,
-              cv::Scalar(0, 255, 0), 2);
-}
-
-std::string VideoProcessorNode::getColorName(uint8_t color)
-{
-  switch (color) {
-    case 0:
-      return "BLUE";
-    case 1:
-      return "RED";
-    case 2:
-      return "NONE";
-    case 3:
-      return "PURPLE";
-    default:
-      return "UNKNOWN";
   }
 }
 
 }  // namespace video_processor
 
-#include "rclcpp_components/register_node_macro.hpp"
-RCLCPP_COMPONENTS_REGISTER_NODE(video_processor::VideoProcessorNode)
+int main(int argc, char * argv[])
+{
+  rclcpp::init(argc, argv);
+  
+  try {
+    rclcpp::NodeOptions options;
+    auto node = std::make_shared<video_processor::VideoProcessorNode>(options);
+    rclcpp::spin(node);
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR(rclcpp::get_logger("video_processor"), "Exception: %s", e.what());
+    return 1;
+  }
+  
+  rclcpp::shutdown();
+  return 0;
+}
